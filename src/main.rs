@@ -8,7 +8,10 @@ use std::{
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "multiplayerctl", about = "Simplifies audio player control across multiple players via playerctl, allowing you to switch focus.")]
+#[structopt(
+    name = "multiplayerctl",
+    about = "Simplifies audio player control across multiple players via playerctl, allowing you to switch focus."
+)]
 enum Args {
     #[structopt(about = "Toggles play/pause for the current player.")]
     Toggle,
