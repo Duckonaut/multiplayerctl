@@ -13,6 +13,8 @@ use structopt::StructOpt;
     about = "Simplifies audio player control across multiple players via playerctl, allowing you to switch focus."
 )]
 enum Args {
+    #[structopt(about = "Lists all available players.")]
+    List,
     #[structopt(about = "Toggles play/pause for the current player.")]
     Toggle,
     #[structopt(about = "Plays the current player.")]
@@ -25,6 +27,51 @@ enum Args {
     Next,
     #[structopt(about = "Plays previous track on the current player.")]
     Previous,
+    #[structopt(about = "Prints or sets the volume of the current player.")]
+    Volume {
+        #[structopt(name = "VALUE", help = "The volume to set the current player to.")]
+        value: Option<String>,
+        #[structopt(
+            short = "f",
+            long = "format",
+            help = "The format to use when printing the volume."
+        )]
+        format: Option<String>,
+    },
+    #[structopt(about = "Prints or sets the position of the current player.")]
+    Position {
+        #[structopt(name = "VALUE", help = "The position to set the current player to.")]
+        value: Option<String>,
+        #[structopt(
+            short = "f",
+            long = "format",
+            help = "The format to use when printing the position."
+        )]
+        format: Option<String>,
+    },
+    #[structopt(about = "Prints the status of the current player.")]
+    Status {
+        #[structopt(
+            short = "f",
+            long = "format",
+            help = "The format to use when printing the status."
+        )]
+        format: Option<String>,
+    },
+    #[structopt(about = "Prints the metadata of the current player.")]
+    Metadata {
+        #[structopt(
+            name = "KEY",
+            help = "If the key is set, only the value with the key is printed."
+        )]
+        key: Option<String>,
+        #[structopt(
+            short = "f",
+            long = "format",
+            help = "The format to use when printing the metadata."
+        )]
+        format: Option<String>,
+    },
 }
 
 fn main() -> Result<(), Error> {
@@ -38,6 +85,7 @@ fn main() -> Result<(), Error> {
     let args = Args::from_args();
 
     match args {
+        Args::List => list_players(),
         Args::Toggle => toggle(&cache_path),
         Args::Play => play(&cache_path),
         Args::Pause => pause(&cache_path),
@@ -47,6 +95,10 @@ fn main() -> Result<(), Error> {
         },
         Args::Next => next(&cache_path),
         Args::Previous => previous(&cache_path),
+        Args::Volume { value, format } => volume(&cache_path, &value, &format),
+        Args::Position { value, format } => position(&cache_path, &value, &format),
+        Args::Status { format } => status(&cache_path, &format),
+        Args::Metadata { key, format } => metadata(&cache_path, &key, &format),
     }
 
     Ok(())
@@ -146,6 +198,16 @@ fn get_current_player(cache_path: &PathBuf) -> String {
     current_player
 }
 
+fn list_players() {
+    let output = Command::new("playerctl")
+        .arg("-l")
+        .output()
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+}
+
 fn toggle(cache_path: &PathBuf) {
     let current_player = get_current_player(&cache_path);
 
@@ -153,7 +215,7 @@ fn toggle(cache_path: &PathBuf) {
         .arg(format!("--player={}", current_player))
         .arg("play-pause")
         .output()
-        .expect("Failed to execute command");
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
 }
 
 fn play(cache_path: &PathBuf) {
@@ -163,7 +225,7 @@ fn play(cache_path: &PathBuf) {
         .arg(format!("--player={}", current_player))
         .arg("play")
         .output()
-        .expect("Failed to execute command");
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
 }
 
 fn pause(cache_path: &PathBuf) {
@@ -173,7 +235,7 @@ fn pause(cache_path: &PathBuf) {
         .arg(format!("--player={}", current_player))
         .arg("pause")
         .output()
-        .expect("Failed to execute command");
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
 }
 
 fn switch(cache_path: &PathBuf) -> Result<(), String> {
@@ -236,19 +298,142 @@ fn switch(cache_path: &PathBuf) -> Result<(), String> {
 fn next(cache_path: &PathBuf) {
     let current_player = get_current_player(&cache_path);
 
-    Command::new("playerctl")
+    let output = Command::new("playerctl")
         .arg(format!("--player={}", current_player))
         .arg("next")
         .output()
-        .expect("Failed to execute command");
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
 }
 
 fn previous(cache_path: &PathBuf) {
     let current_player = get_current_player(&cache_path);
 
-    Command::new("playerctl")
+    let output = Command::new("playerctl")
         .arg(format!("--player={}", current_player))
         .arg("previous")
         .output()
-        .expect("Failed to execute command");
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+}
+
+fn volume(cache_path: &PathBuf, value: &Option<String>, format: &Option<String>) {
+    let current_player = get_current_player(&cache_path);
+
+    let mut args: Vec<String> = vec![
+        format!("--player={}", current_player),
+        "volume".to_string(),
+    ];
+
+    match value {
+        Some(v) => {
+            args.push(v.to_string());
+        }
+        None => (),
+    }
+
+    match format {
+        Some(f) => {
+            args.push(format!("--format={}", f));
+        }
+        None => (),
+    }
+
+    let output = Command::new("playerctl")
+        .args(args)
+        .output()
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+}
+
+fn position(cache_path: &PathBuf, value: &Option<String>, format: &Option<String>) {
+    let current_player = get_current_player(&cache_path);
+
+    let mut args: Vec<String> = vec![
+        format!("--player={}", current_player),
+        "position".to_string(),
+    ];
+
+    match value {
+        Some(v) => {
+            args.push(v.to_string());
+        }
+        None => (),
+    }
+
+    match format {
+        Some(f) => {
+            args.push(format!("--format={}", f));
+        }
+        None => (),
+    }
+
+    let output = Command::new("playerctl")
+        .args(args)
+        .output()
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+}
+
+fn status(cache_path: &PathBuf, format: &Option<String>) {
+    let current_player = get_current_player(&cache_path);
+
+    let mut args: Vec<String> = vec![
+        format!("--player={}", current_player),
+        "status".to_string(),
+    ];
+
+    match format {
+        Some(f) => {
+            args.push(format!("--format={}", f));
+        }
+        None => (),
+    }
+
+    let output = Command::new("playerctl")
+        .args(args)
+        .output()
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+}
+
+fn metadata(cache_path: &PathBuf, key: &Option<String>, format: &Option<String>) {
+    let current_player = get_current_player(&cache_path);
+
+    let mut args: Vec<String> = vec![
+        format!("--player={}", current_player),
+        "metadata".to_string(),
+    ];
+
+    match key {
+        Some(k) => {
+            args.push(k.to_string());
+        }
+        None => (),
+    }
+
+    match format {
+        Some(f) => {
+            args.push(format!("--format={}", f));
+        }
+        None => (),
+    }
+
+    let output = Command::new("playerctl")
+        .args(args)
+        .output()
+        .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+    print!("{}", String::from_utf8(output.stdout).unwrap());
+    eprint!("{}", String::from_utf8(output.stderr).unwrap());
 }
