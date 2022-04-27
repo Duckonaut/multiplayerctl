@@ -175,10 +175,9 @@ fn init_if_empty_player(cache_path: &PathBuf) -> Result<(), String> {
     }
 
     if current_player.is_empty() {
-        if all_player_lines.nth(0).is_some() {
-            current_player = all_player_lines.nth(0).unwrap().to_string();
-        } else {
-            return Err(String::from("No players found!"));
+        match all_player_lines.nth(0) {
+            Some(v) => current_player = v.to_string(),
+            None => return Err(String::from("No players found!")),
         }
     }
 
