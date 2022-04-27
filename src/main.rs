@@ -79,7 +79,10 @@ fn main() -> Result<(), Error> {
 
     match init_if_empty_player(&cache_path) {
         Ok(_) => (),
-        Err(why) => println!("{}", why),
+        Err(why) => {
+            println!("{}", why);
+            return Ok(());
+        },
     }
 
     let args = Args::from_args();
@@ -172,7 +175,11 @@ fn init_if_empty_player(cache_path: &PathBuf) -> Result<(), String> {
     }
 
     if current_player.is_empty() {
-        current_player = all_player_lines.nth(0).expect("No players found!").into();
+        if all_player_lines.nth(0).is_some() {
+            current_player = all_player_lines.nth(0).unwrap().to_string();
+        } else {
+            return Err(String::from("No players found!"));
+        }
     }
 
     file.write_all(current_player.as_bytes())
@@ -324,10 +331,7 @@ fn previous(cache_path: &PathBuf) {
 fn volume(cache_path: &PathBuf, value: &Option<String>, format: &Option<String>) {
     let current_player = get_current_player(&cache_path);
 
-    let mut args: Vec<String> = vec![
-        format!("--player={}", current_player),
-        "volume".to_string(),
-    ];
+    let mut args: Vec<String> = vec![format!("--player={}", current_player), "volume".to_string()];
 
     match value {
         Some(v) => {
@@ -386,10 +390,7 @@ fn position(cache_path: &PathBuf, value: &Option<String>, format: &Option<String
 fn status(cache_path: &PathBuf, format: &Option<String>) {
     let current_player = get_current_player(&cache_path);
 
-    let mut args: Vec<String> = vec![
-        format!("--player={}", current_player),
-        "status".to_string(),
-    ];
+    let mut args: Vec<String> = vec![format!("--player={}", current_player), "status".to_string()];
 
     match format {
         Some(f) => {
