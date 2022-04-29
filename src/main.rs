@@ -309,7 +309,7 @@ fn switch(
                 if l == current_player {
                     if previous {
                         current_player = all_player_lines
-                            .nth((i - 1) % line_count)
+                            .nth((i + line_count - 1) % line_count)
                             .expect("Cannot get indexed player.")
                             .into();
                     } else {
