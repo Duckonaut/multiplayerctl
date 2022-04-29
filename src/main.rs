@@ -22,7 +22,22 @@ enum Args {
     #[structopt(about = "Pauses the current player.")]
     Pause,
     #[structopt(about = "Switches the current player to the next available one.")]
-    Switch,
+    Switch {
+        #[structopt(short = "p", long = "player", help = "The player to switch to.")]
+        player: Option<String>,
+        #[structopt(
+            short = "n",
+            long = "next",
+            help = "Whether to switch to the next player (default behaviour)."
+        )]
+        next: bool,
+        #[structopt(
+            short = "b",
+            long = "back",
+            help = "Whether to switch to the previous player."
+        )]
+        back: bool,
+    },
     #[structopt(about = "Plays next track on the current player.")]
     Next,
     #[structopt(about = "Plays previous track on the current player.")]
@@ -82,7 +97,7 @@ fn main() -> Result<(), Error> {
         Err(why) => {
             println!("{}", why);
             return Ok(());
-        },
+        }
     }
 
     let args = Args::from_args();
@@ -92,7 +107,7 @@ fn main() -> Result<(), Error> {
         Args::Toggle => toggle(&cache_path),
         Args::Play => play(&cache_path),
         Args::Pause => pause(&cache_path),
-        Args::Switch => match switch(&cache_path) {
+        Args::Switch { player, next, back } => match switch(&cache_path, player, next, back) {
             Ok(()) => (),
             Err(why) => println!("Failed to switch player: {}", why),
         },
@@ -244,7 +259,12 @@ fn pause(cache_path: &PathBuf) {
         .expect("Failed to execute playerctl. Are you sure it is installed?");
 }
 
-fn switch(cache_path: &PathBuf) -> Result<(), String> {
+fn switch(
+    cache_path: &PathBuf,
+    player: Option<String>,
+    _next: bool,
+    previous: bool,
+) -> Result<(), String> {
     let mut file_path = cache_path.to_owned();
     file_path.push("currentplayer");
 
@@ -275,14 +295,32 @@ fn switch(cache_path: &PathBuf) -> Result<(), String> {
 
     let line_count = all_player_lines.clone().count();
 
-    for (i, l) in all_player_lines.clone().enumerate() {
-        if l == current_player {
-            current_player = all_player_lines
-                .nth((i + 1) % line_count)
-                .expect("Cannot get indexed player.")
-                .into();
-
-            break;
+    match player {
+        Some(p) => {
+            for l in all_player_lines.clone() {
+                if l == p {
+                    current_player = p;
+                    break;
+                }
+            }
+        }
+        None => {
+            for (i, l) in all_player_lines.clone().enumerate() {
+                if l == current_player {
+                    if previous {
+                        current_player = all_player_lines
+                            .nth((i - 1) % line_count)
+                            .expect("Cannot get indexed player.")
+                            .into();
+                    } else {
+                        current_player = all_player_lines
+                            .nth((i + 1) % line_count)
+                            .expect("Cannot get indexed player.")
+                            .into();
+                    }
+                    break;
+                }
+            }
         }
     }
 
