@@ -1,6 +1,7 @@
 use std::env;
 use std::fs::{create_dir_all, File};
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 use std::{
     io::{Error, Read, Write},
     path::PathBuf,
@@ -72,6 +73,12 @@ enum Args {
             help = "The format to use when printing the status."
         )]
         format: Option<String>,
+        #[structopt(
+            short = "F",
+            long = "follow",
+            help = "Whether to follow the status of the player."
+        )]
+        follow: bool,
     },
     #[structopt(about = "Prints the metadata of the current player.")]
     Metadata {
@@ -86,6 +93,12 @@ enum Args {
             help = "The format to use when printing the metadata."
         )]
         format: Option<String>,
+        #[structopt(
+            short = "F",
+            long = "follow",
+            help = "Whether to follow the status of the player."
+        )]
+        follow: bool,
     },
 }
 
@@ -115,8 +128,12 @@ fn main() -> Result<(), Error> {
         Args::Previous => previous(&cache_path),
         Args::Volume { value, format } => volume(&cache_path, &value, &format),
         Args::Position { value, format } => position(&cache_path, &value, &format),
-        Args::Status { format } => status(&cache_path, &format),
-        Args::Metadata { key, format } => metadata(&cache_path, &key, &format),
+        Args::Status { format, follow } => status(&cache_path, &format, follow),
+        Args::Metadata {
+            key,
+            format,
+            follow,
+        } => metadata(&cache_path, &key, &format, follow),
     }
 
     Ok(())
@@ -190,7 +207,7 @@ fn init_if_empty_player(cache_path: &PathBuf) -> Result<(), String> {
     }
 
     if current_player.is_empty() {
-        match all_player_lines.nth(0) {
+        match all_player_lines.next() {
             Some(v) => current_player = v.to_string(),
             None => return Err(String::from("No players found!")),
         }
@@ -230,7 +247,7 @@ fn list_players() {
 }
 
 fn toggle(cache_path: &PathBuf) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     Command::new("playerctl")
         .arg(format!("--player={}", current_player))
@@ -240,7 +257,7 @@ fn toggle(cache_path: &PathBuf) {
 }
 
 fn play(cache_path: &PathBuf) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     Command::new("playerctl")
         .arg(format!("--player={}", current_player))
@@ -250,7 +267,7 @@ fn play(cache_path: &PathBuf) {
 }
 
 fn pause(cache_path: &PathBuf) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     Command::new("playerctl")
         .arg(format!("--player={}", current_player))
@@ -330,7 +347,7 @@ fn switch(
     };
 
     if current_player.is_empty() {
-        current_player = all_player_lines.nth(0).expect("No players found!").into();
+        current_player = all_player_lines.next().expect("No players found!").into();
     }
 
     file.write_all(current_player.as_bytes())
@@ -340,7 +357,7 @@ fn switch(
 }
 
 fn next(cache_path: &PathBuf) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     let output = Command::new("playerctl")
         .arg(format!("--player={}", current_player))
@@ -353,7 +370,7 @@ fn next(cache_path: &PathBuf) {
 }
 
 fn previous(cache_path: &PathBuf) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     let output = Command::new("playerctl")
         .arg(format!("--player={}", current_player))
@@ -366,7 +383,7 @@ fn previous(cache_path: &PathBuf) {
 }
 
 fn volume(cache_path: &PathBuf, value: &Option<String>, format: &Option<String>) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     let mut args: Vec<String> = vec![format!("--player={}", current_player), "volume".to_string()];
 
@@ -394,7 +411,7 @@ fn volume(cache_path: &PathBuf, value: &Option<String>, format: &Option<String>)
 }
 
 fn position(cache_path: &PathBuf, value: &Option<String>, format: &Option<String>) {
-    let current_player = get_current_player(&cache_path);
+    let current_player = get_current_player(cache_path);
 
     let mut args: Vec<String> = vec![
         format!("--player={}", current_player),
@@ -424,8 +441,8 @@ fn position(cache_path: &PathBuf, value: &Option<String>, format: &Option<String
     eprint!("{}", String::from_utf8(output.stderr).unwrap());
 }
 
-fn status(cache_path: &PathBuf, format: &Option<String>) {
-    let current_player = get_current_player(&cache_path);
+fn status(cache_path: &PathBuf, format: &Option<String>, follow: bool) {
+    let current_player = get_current_player(cache_path);
 
     let mut args: Vec<String> = vec![format!("--player={}", current_player), "status".to_string()];
 
@@ -436,17 +453,39 @@ fn status(cache_path: &PathBuf, format: &Option<String>) {
         None => (),
     }
 
-    let output = Command::new("playerctl")
-        .args(args)
-        .output()
-        .expect("Failed to execute playerctl. Are you sure it is installed?");
+    if !follow {
+        let output = Command::new("playerctl")
+            .args(args)
+            .output()
+            .expect("Failed to execute playerctl. Are you sure it is installed?");
 
-    print!("{}", String::from_utf8(output.stdout).unwrap());
-    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+        print!("{}", String::from_utf8(output.stdout).unwrap());
+        eprint!("{}", String::from_utf8(output.stderr).unwrap());
+    } else {
+        let mut child = Command::new("playerctl")
+            .args(args)
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+        let stdout = child.stdout.as_mut().expect("Failed to get stdout.");
+
+        let mut reader = BufReader::new(stdout);
+
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+
+            reader.read_line(&mut line).expect("Failed to read line.");
+
+            print!("{}", line);
+        }
+    }
 }
 
-fn metadata(cache_path: &PathBuf, key: &Option<String>, format: &Option<String>) {
-    let current_player = get_current_player(&cache_path);
+fn metadata(cache_path: &PathBuf, key: &Option<String>, format: &Option<String>, follow: bool) {
+    let current_player = get_current_player(cache_path);
 
     let mut args: Vec<String> = vec![
         format!("--player={}", current_player),
@@ -467,11 +506,35 @@ fn metadata(cache_path: &PathBuf, key: &Option<String>, format: &Option<String>)
         None => (),
     }
 
-    let output = Command::new("playerctl")
-        .args(args)
-        .output()
-        .expect("Failed to execute playerctl. Are you sure it is installed?");
+    if !follow {
+        let output = Command::new("playerctl")
+            .args(args)
+            .output()
+            .expect("Failed to execute playerctl. Are you sure it is installed?");
 
-    print!("{}", String::from_utf8(output.stdout).unwrap());
-    eprint!("{}", String::from_utf8(output.stderr).unwrap());
+        print!("{}", String::from_utf8(output.stdout).unwrap());
+        eprint!("{}", String::from_utf8(output.stderr).unwrap());
+    } else {
+        args.push("--follow".to_string());
+
+        let mut child = Command::new("playerctl")
+            .args(args)
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Failed to execute playerctl. Are you sure it is installed?");
+
+        let stdout = child.stdout.as_mut().expect("Failed to get stdout.");
+
+        let mut reader = BufReader::new(stdout);
+
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+
+            reader.read_line(&mut line).expect("Failed to read line.");
+
+            print!("{}", line);
+        }
+    }
 }
