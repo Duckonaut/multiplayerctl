@@ -600,6 +600,7 @@ fn metadata(cache_path: &PathBuf, key: &Option<String>, format: &Option<String>,
 
             loop {
                 if CHANGE_SIGNAL_HANDLER.load(Ordering::Relaxed) {
+                    child.kill().expect("Failed to kill child process.");
                     CHANGE_SIGNAL_HANDLER.store(false, Ordering::Relaxed);
                     break;
                 }
