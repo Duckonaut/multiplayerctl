@@ -1,12 +1,19 @@
+use once_cell::sync::Lazy;
 use std::env;
 use std::fs::{create_dir_all, File};
 use std::io::{BufRead, BufReader};
+use std::os::fd::AsRawFd;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{
     io::{Error, Read, Write},
     path::PathBuf,
 };
 use structopt::StructOpt;
+
+static CHANGE_SIGNAL_HANDLER: Lazy<Arc<AtomicBool>> =
+    Lazy::new(|| Arc::new(AtomicBool::new(false)));
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -100,6 +107,8 @@ enum Args {
         )]
         follow: bool,
     },
+    #[structopt(about = "Prints the current player.")]
+    Player,
 }
 
 fn main() -> Result<(), Error> {
@@ -114,6 +123,11 @@ fn main() -> Result<(), Error> {
     }
 
     let args = Args::from_args();
+
+    signal_hook::flag::register(
+        signal_hook::consts::SIGUSR1,
+        Arc::clone(&CHANGE_SIGNAL_HANDLER),
+    )?;
 
     match args {
         Args::List => list_players(),
@@ -134,6 +148,7 @@ fn main() -> Result<(), Error> {
             format,
             follow,
         } => metadata(&cache_path, &key, &format, follow),
+        Args::Player => player(&cache_path),
     }
 
     Ok(())
@@ -353,6 +368,42 @@ fn switch(
     file.write_all(current_player.as_bytes())
         .expect("Failed to write cache file.");
 
+    // send SIGUSR1 to all running instances of multiplayerctl
+    let mut pids = Vec::new();
+
+    for entry in std::fs::read_dir("/proc").expect("Failed to read /proc") {
+        let entry = entry.expect("Failed to read /proc entry");
+        let path = entry.path();
+
+        if path.is_dir() {
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+
+            if file_name.parse::<u32>().is_ok() {
+                let mut file = match File::open(path.join("comm")) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+
+                let mut contents = String::new();
+
+                match file.read_to_string(&mut contents) {
+                    Ok(_) => (),
+                    Err(_) => continue,
+                }
+
+                if contents.contains("multiplayerctl") {
+                    pids.push(file_name.parse::<u32>().unwrap());
+                }
+            }
+        }
+    }
+
+    for pid in pids {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGUSR1);
+        }
+    }
+
     Ok(())
 }
 
@@ -517,24 +568,75 @@ fn metadata(cache_path: &PathBuf, key: &Option<String>, format: &Option<String>,
     } else {
         args.push("--follow".to_string());
 
-        let mut child = Command::new("playerctl")
-            .args(args)
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("Failed to execute playerctl. Are you sure it is installed?");
-
-        let stdout = child.stdout.as_mut().expect("Failed to get stdout.");
-
-        let mut reader = BufReader::new(stdout);
-
-        let mut line = String::new();
-
         loop {
-            line.clear();
+            let current_player = get_current_player(cache_path);
+            args.iter_mut().for_each(|arg| {
+                if arg.starts_with("--player=") {
+                    *arg = format!("--player={}", current_player);
+                }
+            });
+            let mut child = Command::new("playerctl")
+                .args(args.clone())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("Failed to execute playerctl. Are you sure it is installed?");
 
-            reader.read_line(&mut line).expect("Failed to read line.");
+            let stdout = child.stdout.as_mut().expect("Failed to get stdout.");
 
-            print!("{}", line);
+            let fd = stdout.as_raw_fd();
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+            if flags == -1 {
+                panic!("Failed to get file descriptor flags.");
+            }
+
+            let flags = flags | libc::O_NONBLOCK;
+
+            let res = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
+            if res == -1 {
+                panic!("Failed to set non-blocking mode.");
+            }
+
+            let mut buf = [0u8; 1024];
+
+            loop {
+                if CHANGE_SIGNAL_HANDLER.load(Ordering::Relaxed) {
+                    CHANGE_SIGNAL_HANDLER.store(false, Ordering::Relaxed);
+                    break;
+                }
+
+                let n = unsafe {
+                    libc::read(
+                        fd,
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len() as libc::size_t,
+                    )
+                };
+
+                let n = if n >= 0 {
+                    n as usize
+                } else if n == -1 && get_errno() == libc::EAGAIN || get_errno() == libc::EWOULDBLOCK
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                } else {
+                    panic!("Failed to read from stdout.");
+                };
+
+                let s =
+                    String::from_utf8(buf[0..n].to_vec()).expect("Failed to convert to string.");
+
+                print!("{}", s);
+            }
         }
     }
+}
+
+fn get_errno() -> i32 {
+    unsafe { *libc::__errno_location() }
+}
+
+fn player(cache_path: &PathBuf) {
+    let current_player = get_current_player(cache_path);
+
+    print!("{}", current_player);
 }
